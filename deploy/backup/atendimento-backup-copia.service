@@ -1,0 +1,31 @@
+# Cópia CRIPTOGRAFADA dos backups para o Google Drive da loja (rclone + crypt).
+# Disparado por atendimento-backup-copia.timer, depois do backup diário.
+#
+# O remoto "atendimento-cripto:" é configurado à mão no servidor (deploy/README.md, seção 11):
+# o token do Drive e as senhas do crypt ficam só em /var/lib/postgresql/.config/rclone/rclone.conf
+# (600, dono postgres). Nada disso vai para o repositório.
+#
+# O script só apaga do Drive depois de conferir que o backup do dia chegou; sem backup local
+# recente, falha sem apagar nada. Falha → OnFailure= avisa os administradores no Telegram.
+#
+# Instalar: sudo install -m 755 deploy/backup/copiar-backup.sh /usr/local/bin/atendimento-backup-copia.sh
+#           sudo cp deploy/backup/atendimento-backup-copia.service deploy/backup/atendimento-backup-copia.timer /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now atendimento-backup-copia.timer
+
+[Unit]
+Description=Atendimento WhatsApp IA - cópia criptografada dos backups para o Google Drive
+# Se os dois timers dispararem juntos (servidor religado), espera o backup terminar.
+After=network-online.target atendimento-backup.service
+Wants=network-online.target
+OnFailure=atendimento-alerta@%n.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+Environment=PASTA_BACKUP=/var/backups/atendimento
+Environment=REMOTO=atendimento-cripto:
+Environment=DIAS_DRIVE=30
+ExecStart=/usr/local/bin/atendimento-backup-copia.sh
+SyslogIdentifier=atendimento-backup-copia
+Nice=10

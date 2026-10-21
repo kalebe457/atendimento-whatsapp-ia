@@ -1,0 +1,24 @@
+# Aviso de falha de um serviço da Loja Exemplo (usado por OnFailure=atendimento-alerta@%n.service).
+# Manda no PRIVADO dos administradores do grupo de vendedores (que fizeram /start) o nome do serviço
+# que falhou e o comando para ver o log. Nenhum dado de cliente; nenhuma credencial aqui (o comando
+# lê o .env do backend, como o próprio backend).
+# Instalar: sudo cp deploy/atendimento-alerta@.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# Testar:   sudo systemctl start atendimento-alerta@teste.service
+
+[Unit]
+Description=Atendimento WhatsApp IA - avisa os administradores da falha de %i
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=atendimento
+Group=atendimento
+WorkingDirectory=/opt/app/backend
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/alertarAdmins.js %i
+SyslogIdentifier=atendimento-alerta
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true

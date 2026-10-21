@@ -1,0 +1,15 @@
+{
+  // Build de produção: compila só src/ para dist/ (npm run build) e roda com `node dist/mainwebhook.js`.
+  // Os testes e os scripts continuam sendo checados pelo tsconfig.json (npx tsc --noEmit).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": true,
+    // Erro de tipo não gera build (nada quebrado vai para o servidor).
+    "noEmitOnError": true
+  },
+  "include": ["src/**/*.ts"]
+}

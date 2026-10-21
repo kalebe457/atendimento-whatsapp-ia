@@ -1,0 +1,26 @@
+# Backup diário do banco atendimento (disparado por atendimento-backup.timer).
+# Instalar (ver deploy/README.md, seção Backup):
+#   sudo install -m 755 deploy/backup/backup-atendimento.sh /usr/local/bin/atendimento-backup.sh
+#   sudo cp deploy/backup/atendimento-backup.service deploy/backup/atendimento-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now atendimento-backup.timer
+
+[Unit]
+Description=Atendimento WhatsApp IA - backup diário do banco (pg_dump)
+After=postgresql.service
+Requires=postgresql.service
+OnFailure=atendimento-alerta@%n.service
+
+[Service]
+Type=oneshot
+# /var/backups é do root: a pasta é criada (como root, pelo "+") antes de o backup rodar como postgres.
+ExecStartPre=+/usr/bin/install -d -o postgres -g postgres -m 700 /var/backups/atendimento
+# postgres: autenticação local "peer", nenhuma senha em arquivo.
+User=postgres
+Group=postgres
+Environment=BANCO=atendimento
+Environment=PASTA_BACKUP=/var/backups/atendimento
+Environment=DIAS_RETENCAO=14
+ExecStart=/usr/local/bin/atendimento-backup.sh
+SyslogIdentifier=atendimento-backup
+Nice=10
+IOSchedulingClass=idle

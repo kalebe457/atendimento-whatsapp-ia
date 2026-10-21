@@ -1,0 +1,28 @@
+{
+  "name": "atendimento-whatsapp-ia",
+  "version": "1.0.0",
+  "description": "Atendimento pelo WhatsApp com triagem por IA (Claude) e repasse a vendedores pelo Telegram. Projeto de portfólio.",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/mainwebhook.js",
+    "migrate": "node --import tsx scripts/migrar.mts",
+    "test": "node tests/run-all.mjs",
+    "test:db": "node --import tsx tests/preparar-banco-teste.mts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "dotenv": "^18.0.4",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}

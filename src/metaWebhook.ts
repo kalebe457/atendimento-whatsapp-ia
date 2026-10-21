@@ -1,0 +1,441 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+
+import { mascararPhoneNumberId, valorSeguro, wamidSeguro } from "./logSeguro.js";
+
+import type { MidiaRecebida, TipoMidia } from "./tipos.js";
+
+import type { EventoMensagem } from "./webhook.js";
+
+/*
+ * Segredos da integração com a WhatsApp Cloud API (Meta).
+ *
+ * Nunca devem ser impressos em logs.
+ */
+const META_APP_SECRET = process.env.META_APP_SECRET ?? "";
+
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN ?? "";
+
+/*
+ * Estrutura do payload enviado pela Cloud API.
+ *
+ * Apenas os campos usados nesta etapa.
+ */
+type MetaMensagem = {
+  id?: string;
+
+  from?: string;
+
+  timestamp?: string;
+
+  type?: string;
+
+  text?: {
+    body?: string;
+  };
+
+  [key: string]: unknown;
+};
+
+/*
+ * Tipos de mídia tratados (B7). Legenda só em imagem, vídeo e
+ * documento (campo caption). Outros tipos (reação, botão,
+ * unsupported...) seguem descartados.
+ */
+const TIPOS_MIDIA = new Set<string>(["audio", "image", "video", "document", "sticker", "location", "contacts"]);
+
+const TIPOS_COM_LEGENDA = new Set<string>(["image", "video", "document"]);
+
+function midiaDaMensagem(mensagem: MetaMensagem): MidiaRecebida | null {
+  const tipo = mensagem.type;
+
+  if (typeof tipo !== "string" || !TIPOS_MIDIA.has(tipo)) {
+    return null;
+  }
+
+  const conteudo = mensagem[tipo];
+
+  const caption =
+    TIPOS_COM_LEGENDA.has(tipo) && typeof conteudo === "object" && conteudo !== null
+      ? (conteudo as { caption?: unknown }).caption
+      : undefined;
+
+  const legenda = typeof caption === "string" ? caption.trim() : "";
+
+  return { tipo: tipo as TipoMidia, legenda: legenda === "" ? null : legenda };
+}
+
+type MetaErro = {
+  code?: number;
+
+  title?: string;
+
+  message?: string;
+
+  error_data?: {
+    details?: string;
+  };
+};
+
+export type MetaStatus = {
+  /*
+   * wamid da mensagem enviada.
+   */
+  id?: string;
+
+  /*
+   * sent, delivered, read, failed...
+   */
+  status?: string;
+
+  timestamp?: string;
+
+  recipient_id?: string;
+
+  errors?: MetaErro[];
+};
+
+type MetaValue = {
+  messaging_product?: string;
+
+  metadata?: {
+    display_phone_number?: string;
+
+    phone_number_id?: string;
+  };
+
+  messages?: MetaMensagem[];
+
+  statuses?: MetaStatus[];
+
+  [key: string]: unknown;
+};
+
+export type MetaWebhookPayload = {
+  object?: string;
+
+  entry?: {
+    id?: string;
+
+    changes?: {
+      field?: string;
+
+      value?: MetaValue;
+    }[];
+  }[];
+};
+
+export type RespostaVerificacaoMeta = {
+  statusCode: number;
+
+  body: string;
+};
+
+/*
+ * Prefixo do chatId das conversas da Meta
+ * (meta:<phone_number_id>:<wa_id>).
+ */
+const PREFIXO_CHAT_META = "meta:";
+
+/**
+ * Indica se o chatId pertence a uma conversa da Meta.
+ */
+export function ehChatMeta(chatId: string): boolean {
+  return chatId.startsWith(PREFIXO_CHAT_META);
+}
+
+/**
+ * Lê um chatId no formato meta:<phone_number_id>:<from>.
+ *
+ * O from é devolvido exatamente como veio
+ * no webhook (sem corrigir o 9º dígito).
+ */
+export function lerChatIdMeta(
+  chatId: string,
+): { phoneNumberId: string; from: string } | null {
+  if (!ehChatMeta(chatId)) {
+    return null;
+  }
+
+  const resto = chatId.slice(PREFIXO_CHAT_META.length);
+
+  const separador = resto.indexOf(":");
+
+  if (separador <= 0 || separador === resto.length - 1) {
+    return null;
+  }
+
+  return {
+    phoneNumberId: resto.slice(0, separador),
+
+    from: resto.slice(separador + 1),
+  };
+}
+
+/**
+ * Compara dois textos em tempo constante.
+ *
+ * Os hashes têm sempre o mesmo tamanho,
+ * então o tamanho do segredo não vaza.
+ */
+function textosIguais(a: string, b: string): boolean {
+  const hashA = createHash("sha256").update(a, "utf8").digest();
+
+  const hashB = createHash("sha256").update(b, "utf8").digest();
+
+  return timingSafeEqual(hashA, hashB);
+}
+
+/**
+ * Trata o GET de verificação do webhook.
+ *
+ * A Meta envia hub.mode, hub.verify_token
+ * e hub.challenge. Se o token conferir,
+ * devolvemos o challenge.
+ */
+export function verificarDesafioMeta(
+  parametros: URLSearchParams,
+): RespostaVerificacaoMeta {
+  if (!META_VERIFY_TOKEN) {
+    console.error("META_VERIFY_TOKEN não configurado.");
+
+    return { statusCode: 403, body: "Forbidden" };
+  }
+
+  const modo = parametros.get("hub.mode");
+
+  const token = parametros.get("hub.verify_token") ?? "";
+
+  const challenge = parametros.get("hub.challenge") ?? "";
+
+  if (modo !== "subscribe" || !textosIguais(token, META_VERIFY_TOKEN)) {
+    console.log("Verificação do webhook Meta recusada.");
+
+    return { statusCode: 403, body: "Forbidden" };
+  }
+
+  console.log("Webhook Meta verificado.");
+
+  return { statusCode: 200, body: challenge };
+}
+
+/**
+ * Verifica o header X-Hub-Signature-256.
+ *
+ * É o HMAC-SHA256 do corpo bruto,
+ * usando o App Secret.
+ */
+export function verificarAssinaturaMeta(
+  rawBody: Buffer,
+  signatureHeader: string | undefined,
+): boolean {
+  if (!META_APP_SECRET) {
+    console.error("META_APP_SECRET não configurado.");
+
+    return false;
+  }
+
+  if (!signatureHeader) {
+    return false;
+  }
+
+  const expected =
+    "sha256=" +
+    createHmac("sha256", META_APP_SECRET).update(rawBody).digest("hex");
+
+  const expectedBuffer = Buffer.from(expected, "utf8");
+
+  const receivedBuffer = Buffer.from(signatureHeader, "utf8");
+
+  if (expectedBuffer.length !== receivedBuffer.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+/**
+ * Registra um status de mensagem.
+ *
+ * IMPORTANTE:
+ *
+ * "accepted" na resposta da Graph API
+ * NÃO é entrega. O resultado real chega
+ * aqui depois (sent, delivered, read, failed).
+ *
+ * Os códigos de erro são registrados
+ * exatamente como vieram (ex.: 130497),
+ * sem interpretação automática.
+ */
+function registrarStatus(status: MetaStatus, phoneNumberId: string): void {
+  const partes = [
+    "Status Meta recebido.",
+    `status: ${valorSeguro(status.status)}`,
+    `wamid: ${status.id ? wamidSeguro(status.id) : "não informado"}`,
+    `phone_number_id: ${mascararPhoneNumberId(phoneNumberId)}`,
+  ];
+
+  for (const erro of status.errors ?? []) {
+    partes.push(`erro code: ${erro.code ?? "não informado"}`);
+
+    /*
+     * title e error_data.details não são registrados: são texto
+     * vindo do corpo da notificação e podem conter dados pessoais.
+     */
+  }
+
+  if (status.status === "failed") {
+    console.error(partes.join(" | "));
+  } else {
+    console.log(partes.join(" | "));
+  }
+}
+
+/**
+ * Parser mínimo do payload da Cloud API.
+ *
+ * Nesta etapa apenas registra o que chegou.
+ * As mensagens ainda NÃO são enviadas
+ * ao núcleo de atendimento.
+ */
+export function processarPayloadMeta(payload: MetaWebhookPayload): void {
+  if (payload.object !== "whatsapp_business_account") {
+    console.log(
+      `Payload Meta ignorado: object = ${valorSeguro(payload.object)}`,
+    );
+
+    return;
+  }
+
+  for (const entrada of payload.entry ?? []) {
+    for (const mudanca of entrada.changes ?? []) {
+      const value = mudanca.value;
+
+      if (mudanca.field !== "messages" || !value) {
+        console.log(
+          `Mudança Meta ignorada: field = ${valorSeguro(mudanca.field)}`,
+        );
+
+        continue;
+      }
+
+      const phoneNumberId = value.metadata?.phone_number_id ?? "não informado";
+
+      for (const mensagem of value.messages ?? []) {
+        console.log(
+          [
+            "Mensagem Meta recebida.",
+            `type: ${valorSeguro(mensagem.type)}`,
+            `wamid: ${wamidSeguro(mensagem.id)}`,
+            `phone_number_id: ${mascararPhoneNumberId(phoneNumberId)}`,
+          ].join(" | "),
+        );
+      }
+
+      for (const status of value.statuses ?? []) {
+        registrarStatus(status, phoneNumberId);
+      }
+    }
+  }
+}
+
+/**
+ * Lista os statuses[] do payload.
+ */
+export function listarStatusesMeta(payload: MetaWebhookPayload): MetaStatus[] {
+  const statuses: MetaStatus[] = [];
+
+  if (payload.object !== "whatsapp_business_account") {
+    return statuses;
+  }
+
+  for (const entrada of payload.entry ?? []) {
+    for (const mudanca of entrada.changes ?? []) {
+      if (mudanca.field !== "messages" || !mudanca.value) {
+        continue;
+      }
+
+      statuses.push(...(mudanca.value.statuses ?? []));
+    }
+  }
+
+  return statuses;
+}
+
+/**
+ * Converte messages[] da Cloud API para o formato
+ * interno de evento do núcleo de atendimento
+ * (EventoMensagem), na ordem original do payload.
+ *
+ * statuses[] não viram eventos.
+ */
+export function normalizarMensagensMeta(
+  payload: MetaWebhookPayload,
+): EventoMensagem[] {
+  const eventos: EventoMensagem[] = [];
+
+  if (payload.object !== "whatsapp_business_account") {
+    return eventos;
+  }
+
+  for (const entrada of payload.entry ?? []) {
+    for (const mudanca of entrada.changes ?? []) {
+      const value = mudanca.value;
+
+      if (mudanca.field !== "messages" || !value) {
+        continue;
+      }
+
+      const phoneNumberId = value.metadata?.phone_number_id;
+
+      if (!phoneNumberId) {
+        continue;
+      }
+
+      for (const mensagem of value.messages ?? []) {
+        if (!mensagem.id || !mensagem.from) {
+          continue;
+        }
+
+        const midia = midiaDaMensagem(mensagem);
+
+        eventos.push({
+          event: "message.received",
+
+          /*
+           * O wamid evita processar duas vezes
+           * quando a Meta reenvia o webhook.
+           */
+          idempotencyKey: mensagem.id,
+
+          data: {
+            id: mensagem.id,
+
+            chatId: `${PREFIXO_CHAT_META}${phoneNumberId}:${mensagem.from}`,
+
+            from: mensagem.from,
+
+            /*
+             * wa_id do cliente.
+             */
+            senderPhone: mensagem.from,
+
+            body: mensagem.type === "text" ? (mensagem.text?.body ?? "") : "",
+
+            type: mensagem.type ?? "desconhecido",
+
+            ...(midia ? { midia } : {}),
+
+            /*
+             * Unix time em segundos.
+             */
+            ...(mensagem.timestamp !== undefined
+              ? { timestamp: mensagem.timestamp }
+              : {}),
+          },
+        });
+      }
+    }
+  }
+
+  return eventos;
+}

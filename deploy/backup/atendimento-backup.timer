@@ -1,0 +1,14 @@
+# Todo dia às 03:30 no horário de Belém (fuso explícito no OnCalendar: vale mesmo que o servidor
+# fique em outro fuso; o README também fixa o do sistema). Persistent: se o servidor
+# estava desligado na hora, roda assim que ligar.
+
+[Unit]
+Description=Atendimento WhatsApp IA - backup diário do banco
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 America/Belem
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

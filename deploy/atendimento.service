@@ -1,0 +1,57 @@
+# Backend do Atendimento WhatsApp IA (systemd).
+# Instalar: sudo cp deploy/atendimento.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now atendimento
+#
+# Segredos NÃO ficam aqui: o backend lê o .env da pasta (WorkingDirectory),
+# criado à mão no servidor, dono atendimento, permissão 600.
+
+[Unit]
+Description=Atendimento WhatsApp IA - backend (WhatsApp, Telegram)
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+# Até 10 reinícios em 5 min; depois o systemd para de tentar e o serviço fica "failed"
+# (OnFailure= avisa os administradores no Telegram).
+StartLimitIntervalSec=300
+StartLimitBurst=10
+OnFailure=atendimento-alerta@%n.service
+
+[Service]
+Type=simple
+User=atendimento
+Group=atendimento
+WorkingDirectory=/opt/app/backend
+ExecStart=/usr/bin/node dist/mainwebhook.js
+
+# Só o que não é segredo. HOST=127.0.0.1: o backend só escuta em localhost; o Caddy faz o
+# HTTPS na frente (o ufw é a segunda camada).
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOST=127.0.0.1
+
+Restart=always
+RestartSec=5
+
+# Parada: SIGTERM; o backend recusa webhooks com 503 (Meta e Telegram reenviam), espera a
+# fila em andamento até 45 s, fecha o banco e sai. Depois de 60 s o systemd mata.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# Logs no journald (retenção de 30 dias: deploy/journald-atendimento.conf).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atendimento
+
+# Endurecimento: sem root e o sistema de arquivos inteiro só leitura para o backend (ele não grava
+# nada; dist/ e o .env não podem ser alterados por ele). PrivateTmp dá um /tmp próprio.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

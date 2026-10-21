@@ -1,0 +1,14 @@
+# Todo dia às 04:30 no horário de Belém (uma hora depois do backup das 03:30; fuso explícito no
+# OnCalendar). Persistent: se o servidor estava
+# desligado na hora, roda assim que ligar.
+
+[Unit]
+Description=Atendimento WhatsApp IA - cópia diária dos backups para o Google Drive
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 America/Belem
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

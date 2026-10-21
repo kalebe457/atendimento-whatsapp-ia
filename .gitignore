@@ -1,0 +1,20 @@
+node_modules
+.env
+dist
+
+# Segredos (qualquer variante do .env)
+.env.*
+!.env.example
+
+# Backups e dumps (têm dados pessoais)
+*.dump
+*.parcial
+*.sql.gz
+
+# Logs e saídas
+*.log
+coverage/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db

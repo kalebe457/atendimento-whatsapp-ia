@@ -1,0 +1,52 @@
+# Caddy: HTTPS automático (Let's Encrypt) para a API e o site da loja.
+# Instalar: sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+#
+# - api.exemplo.com.br: só três rotas chegam ao backend; todo o resto recebe 404.
+# - exemplo.com.br e www: página da loja e política de privacidade (deploy/site/,
+#   copiada para /var/www/atendimento pelo deploy/atualizar.sh).
+# O DNS (registros A) dos três nomes precisa apontar para a VPS antes do primeiro reload.
+
+(seguranca) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}
+
+api.exemplo.com.br {
+	import seguranca
+
+	@backend path /meta/webhook /telegram/webhook /health
+
+	handle @backend {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle {
+		respond 404
+	}
+
+	# Sem log de acesso: as URLs não carregam dado pessoal, mas os IPs dos clientes
+	# da Meta/Telegram não interessam. Erros do Caddy continuam no journald.
+
+	# Corpo maior que 1 MB é recusado antes de chegar ao backend (o backend também limita).
+	request_body {
+		max_size 1MB
+	}
+}
+
+exemplo.com.br, www.exemplo.com.br {
+	import seguranca
+
+	# Página estática, sem scripts: nada externo é carregado.
+	header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+	root * /var/www/atendimento
+
+	# /privacidade também abre /privacidade.html.
+	try_files {path} {path}.html
+
+	file_server
+}
